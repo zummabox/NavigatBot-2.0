@@ -274,7 +274,7 @@ async def back_callback(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.answer("Предыдущего шага нет, нажмите 'Отмена', чтобы выйти.")
 
     await callback.answer()
-##############################################################################################
+################################################################################################
 
 
 @admin_router.callback_query(AddDetails.category)
