@@ -13,6 +13,7 @@ from database.orm_query import (orm_add_detail, orm_get_details,
                                 orm_get_detail_report, orm_get_tasks, orm_delete_task, orm_get_task_by_id)
 
 from filters.chat_types import ChatTypeFilter, IsAdmin
+from handlers.fsm_utils import go_to_next_state
 from handlers.user_private import GROUP_CHAT_ID
 from kbds.callback_list import report_buttons, add_buttons
 from kbds.inline_kbds import get_callback_btns
@@ -200,18 +201,16 @@ async def delete_item(callback: types.CallbackQuery, session: AsyncSession):
 
 ########################## Изменение данных ####################################
 class AddDetails(StatesGroup):
-    name = State()
-    number = State()
     category = State()
-    status = State()
+    name = State()
+    process_details = State()
 
     detail_for_change = None
 
     texts = {
-        'AddDetails:name': 'Введите название заново:',
-        'AddDetails:number': 'Введите номер заново:',
         'AddDetails:category': 'Выберите категорию заново:',
-        'AddDetails:status': 'Этот стейт последний, поэтому...',
+        'AddDetails:name': 'Введите название заново:',
+        'AddDetails:process_details': 'Введите заводской номер и статус в формате: Номер, Статус',
     }
 
 
@@ -221,10 +220,7 @@ async def change_detail_callback(callback: types.CallbackQuery, state: FSMContex
     btns = {category.name: str(category.id) for category in categories}
 
     detail_id = callback.data.split("_")[-1]
-
-    detail_for_change = await orm_get_detail(session, int(detail_id))
-
-    AddDetails.detail_for_change = detail_for_change
+    AddDetails.detail_for_change = await orm_get_detail(session, int(detail_id))
 
     await callback.answer()
     await callback.message.answer("Выберите изделие", reply_markup=get_callback_btns(btns=btns))
@@ -235,6 +231,7 @@ async def change_detail_callback(callback: types.CallbackQuery, state: FSMContex
 async def add_category(message: types.Message, state: FSMContext, session: AsyncSession):
     categories = await orm_get_categories(session)
     btns = {category.name: str(category.id) for category in categories}
+    await message.delete()
     await message.answer("Выберите изделие", reply_markup=get_callback_btns(btns=btns))
     await state.set_state(AddDetails.category)
 
@@ -242,60 +239,66 @@ async def add_category(message: types.Message, state: FSMContext, session: Async
 ############################## Функции отмены и назад #######################################
 @admin_router.callback_query(StateFilter('*'), F.data == "cancel:отмена")
 async def cancel_callback(callback: types.CallbackQuery, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is not None:
-        await state.clear()
+    await state.clear()
     await callback.message.answer("Действие отменено", reply_markup=ADMIN_KB)
     await callback.answer()
 
 
-@admin_router.callback_query(StateFilter('*'), F.data == "back:назад")
-async def back_callback(callback: types.CallbackQuery, state: FSMContext):
-    """Обрабатывает кнопку 🔙 Назад на любом этапе FSM"""
-    current_state = await state.get_state()
+@admin_router.callback_query(F.data.startswith("back"))
+async def process_back_button(callback_query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    state_history = data.get('state_history', [])
 
-    if current_state == AddDetails.name:
-        await callback.message.answer("Вы на первом шаге, вернуться нельзя. Введите название или нажмите 'Отмена'")
-        await callback.answer()
+    if len(state_history) < 2:
+        await callback_query.answer("Вы уже на первом шаге.", show_alert=True)
         return
 
-    previous_state = None
-    for step in AddDetails.__all_states__:
-        if step.state == current_state:
-            break
-        previous_state = step
+    # Убираем текущий шаг и берём предыдущий
+    state_history.pop()
+    previous_state = state_history[-1]
 
-    if previous_state:
-        await state.set_state(previous_state)
-        await callback.message.answer(f"Вы вернулись на шаг: {previous_state.state}",
-                                      reply_markup=get_callback_btns(
-                                          btns={"🔙Назад": "back:назад", "❌Отмена": "cancel:отмена"}))
+    # Сохраняем обновлённую историю
+    await state.update_data(state_history=state_history)
+    await state.set_state(previous_state)
+
+    # Определяем текст и кнопки
+    previous_text = AddDetails.texts.get(previous_state, "Текст не найден.")
+
+    if previous_state == AddDetails.category.state:
+        categories = await orm_get_categories(session)
+        btns = {category.name: str(category.id) for category in categories}
+        keyboard = get_callback_btns(btns=btns)
+    elif previous_state == AddDetails.name.state:
+        user_data = await state.get_data()
+        category_id = user_data.get('category')
+        btns = add_buttons.get(category_id, {})
+        keyboard = get_callback_btns(btns=btns)
     else:
-        await callback.message.answer("Предыдущего шага нет, нажмите 'Отмена', чтобы выйти.")
+        keyboard = None
 
-    await callback.answer()
+    await callback_query.message.edit_text(previous_text, reply_markup=keyboard)
+
 ################################################################################################
 
 
 @admin_router.callback_query(AddDetails.category)
 async def category_choice(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    categories = await orm_get_categories(session)
     category_id = int(callback.data)
+    categories = await orm_get_categories(session)
+
     if category_id in [category.id for category in categories]:
-        await callback.answer()
+        btns = add_buttons.get(category_id, {})
 
-        await state.update_data(category=callback.data)
+        # Сохраняем кнопки и предыдущий статус в state
+        await state.update_data(category=category_id, prev_buttons=get_callback_btns(btns=btns))
 
-        if category_id in add_buttons:
-            btns = add_buttons[category_id]
+        # Переход с сохранением истории состояний
+        await go_to_next_state(state, AddDetails.name)
 
-        await callback.message.delete()
-        await callback.message.answer('Выберите деталь.', reply_markup=get_callback_btns(btns=btns))
-
-        await state.set_state(AddDetails.name)
+        await callback.message.edit_text('Выберите деталь.', reply_markup=get_callback_btns(btns=btns))
     else:
-        await callback.message.answer('Выберите изделие из кнопок.')
-        await callback.answer()
+        await callback.answer("Выберите изделие из кнопок.")
+
 
 
 ######## Ловим любые некорректные действия, кроме нажатия на кнопку выбора категории #########
@@ -308,15 +311,23 @@ async def category_choice2(message: types.Message):
 @admin_router.callback_query(AddDetails.name, F.data.startswith("add:"))
 async def add_name(callback: types.CallbackQuery, state: FSMContext):
     name = callback.data.split(":")[-1]
-    if name.strip().lower() == 'пропустить':
-        await state.update_data(name=AddDetails.detail_for_change.name)
-    else:
-        await callback.answer()
-        await state.update_data(name=name)
 
-    await callback.message.delete()
-    await callback.message.answer("Введите заводской номер")
-    await state.set_state(AddDetails.number)
+    btns = {
+        "❌Отмена": "cancel:отмена",
+        "🔙Назад": "back"
+    }
+    keyboard = get_callback_btns(btns=btns, sizes=(2,))
+
+    # Обновляем состояние с введённым названием
+    await state.update_data(name=AddDetails.detail_for_change.name if name.strip().lower() == 'пропустить' else name)
+
+    # Переход с сохранением истории состояний
+    await go_to_next_state(state, AddDetails.process_details)
+
+    # Редактируем сообщение с добавлением клавиатуры
+    await callback.message.edit_text("Введите заводской номер и статус в формате 'Номер, Статус'",
+                                     reply_markup=keyboard)
+
 
 
 # Хендлер для отлова некорректных вводов для состояния name
@@ -326,55 +337,47 @@ async def add_name(message: types.Message):
 
 ##############################################################################################
 
-@admin_router.message(AddDetails.number, F.text)
-async def add_number(message: types.Message, state: FSMContext):
-    if message.text == ".":
-        await state.update_data(number=AddDetails.detail_for_change.number)
-    else:
-        if 4 >= len(message.text):
-            await message.answer(
-                "Слишком короткое заводской номер. \n Введите заново"
-            )
-            return
-        await state.update_data(number=message.text)
+@admin_router.message(AddDetails.process_details, F.text)
+async def add_process_details(message: types.Message, state: FSMContext, session: AsyncSession):
+    await message.delete()
+    details_data = message.text.split("\n")
+    state_data = await state.get_data()
 
-    await message.answer("Введите статус")
-    await state.set_state(AddDetails.status)
+    # Убедитесь, что state_data — это словарь
+    if not isinstance(state_data, dict):
+        await message.answer("Ошибка данных. Попробуйте начать заново.")
+        await state.clear()
+        return
 
+    # Проверка на наличие категории
+    if "category" not in state_data:
+        await message.answer("Не выбрана категория! Пожалуйста, выберите категорию и повторите попытку.")
+        return
 
-###### Хендлер для отлова некорректных вводов для состояния description #######
-@admin_router.message(AddDetails.number)
-async def add_number2(message: types.Message):
-    await message.answer("Вы ввели не допустимые данные, введите текст описания товара")
+    for detail_data in details_data:
+        data = detail_data.split(',')
+        if len(data) == 2:
+            number, status = map(str.strip, data)
+            number = AddDetails.detail_for_change.number if number == "." else number
+            status = AddDetails.detail_for_change.status if status == "." else status
+            state_data.update({'number': number, 'status': status})
 
-##############################################################################################
-
-@admin_router.message(AddDetails.status, F.text)
-async def add_status(message: types.Message, state: FSMContext, session: AsyncSession):
-    if message.text == "." and AddDetails.detail_for_change:
-        await state.update_data(status=AddDetails.detail_for_change.status)
-    else:
-        await state.update_data(status=message.text)
-
-    data = await state.get_data()
-    try:
-        if AddDetails.detail_for_change:
-            await orm_update_detail(session, AddDetails.detail_for_change.id, data)
+            if AddDetails.detail_for_change:
+                await orm_update_detail(session, AddDetails.detail_for_change.id, state_data)
+                await message.answer("Данные детали обновлены")
+            else:
+                # Добавляем категорию, если она есть в state_data
+                data = dict(state_data)  # Создаем копию словаря
+                data["category"] = state_data["category"]
+                await orm_add_detail(session, data)
+                await message.answer("Детали успешно добавлены")
         else:
-            await orm_add_detail(session, data)
+            await message.answer("Пожалуйста, введите данные в правильном формате: Номер, Статус")
+            return
 
-        await message.answer("Данные добавлены/изменены ✅", reply_markup=ADMIN_KB)
-        await state.clear()
-
-    except Exception as e:
-        await message.answer(
-            f"Ошибка: \n{str(e)}\nОбратитесь к программисту", reply_markup=ADMIN_KB)
-        await state.clear()
-
+    await state.clear()
     AddDetails.detail_for_change = None
+    summary = f"<b>⚙️Название:</b> {state_data.get('name')}\n<b>#️⃣Номер:</b> {state_data.get('number')}\n<b>♻️Статус:</b> {state_data.get('status')}"
+    await message.answer(f"<b>📝Итоговые данные:</b>\n{summary}", parse_mode="HTML")
 
 
-# Хендлер для отлова некорректных ввода для состояния price
-@admin_router.message(AddDetails.status)
-async def add_price2(message: types.Message):
-    await message.answer("Вы ввели не допустимые данные, введите статус детали")
