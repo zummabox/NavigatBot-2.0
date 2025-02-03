@@ -2,6 +2,7 @@ import pytz
 from datetime import datetime
 from sqlalchemy import String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import Column, Integer, ARRAY
 
 local_tz = pytz.timezone('Europe/Moscow')
 
@@ -40,3 +41,11 @@ class Task(Base):
     username: Mapped[str] = mapped_column(String(150), nullable=False)
     contact_number: Mapped[str] = mapped_column(String, nullable=False)
     group_message_id: Mapped[int] = mapped_column(nullable=True)
+
+class MsgId(Base):
+    __tablename__ = 'msg_id'
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    chat_id = Column(Integer, nullable=False)
+    summary_msg_id: Mapped[int] = mapped_column(nullable=True)  # Для итогового сообщения
+    detail_report_msg_id: Mapped[int] = mapped_column(nullable=True)  # Для отчета по деталям
+    all_report_msg_id = Column(String, nullable=True)  # Для общего отчета
