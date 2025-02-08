@@ -1,7 +1,7 @@
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Detail, Category, Task, MsgId
+from database.models import Detail, Category, Task
 
 
 ############################ Детали ######################################
@@ -91,45 +91,3 @@ async def orm_get_task_by_id(session: AsyncSession, task_id: int):
     query = select(Task).where(Task.id == task_id)
     result = await session.execute(query)
     return result.scalar_one_or_none()
-
-
-############################ ID сообщений ######################################
-async def update_summary_msg_id(session: AsyncSession, chat_id: int, summary_msg_id: int):
-    async with session.begin():
-        result = await session.execute(select(MsgId).filter_by(chat_id=chat_id))
-        msg = result.scalars().first()
-
-        if msg:
-            msg.summary_msg_id = summary_msg_id
-        else:
-            msg = MsgId(chat_id=chat_id, summary_msg_id=summary_msg_id)
-            session.add(msg)
-
-        await session.commit()
-
-
-
-async def update_detail_report_msg_id(session: AsyncSession, chat_id: int, msg_id: int):
-    # Создаем новую запись для каждого сообщения
-    msg = MsgId(chat_id=chat_id, detail_report_msg_id=msg_id)
-    session.add(msg)
-    await session.commit()
-
-
-async def update_all_report_msg_id(session: AsyncSession, chat_id: int, new_msg_id: int):
-    print(f"Обновляем/добавляем записи для chat_id={chat_id}, new_msg_id={new_msg_id}")
-    result = await session.execute(select(MsgId).filter_by(chat_id=chat_id))
-    msg_record = result.scalars().first()
-
-    if msg_record:
-        print(f"Найдена запись для chat_id={chat_id}")
-        msg_ids = msg_record.all_report_msg_id.split(",") if msg_record.all_report_msg_id else []
-        msg_ids.append(str(new_msg_id))
-        msg_record.all_report_msg_id = ",".join(msg_ids)
-    else:
-        print(f"Не найдена запись для chat_id={chat_id}, создаем новую")
-        msg_record = MsgId(id=chat_id, chat_id=chat_id, all_report_msg_id=str(new_msg_id))
-        session.add(msg_record)
-
-    await session.commit()
-

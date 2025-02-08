@@ -1,6 +1,6 @@
 import pytz
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import Column, Integer, ARRAY
 
@@ -41,6 +41,16 @@ class Task(Base):
     username: Mapped[str] = mapped_column(String(150), nullable=False)
     contact_number: Mapped[str] = mapped_column(String, nullable=False)
     group_message_id: Mapped[int] = mapped_column(nullable=True)
+
+
+class Message(Base):
+    __tablename__ = 'messages'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(Integer, index=True)  # Идентификатор чата (если нужно)
+    message_id: Mapped[int] = mapped_column(Integer)  # ID сообщения
+    message_type: Mapped[str] = mapped_column(String)  # Тип сообщения (например, "detail_report")
+    created_at: Mapped[int] = mapped_column(Integer)  # Время отправки (можно использовать для удаления по времени)
 
 class MsgId(Base):
     __tablename__ = 'msg_id'
