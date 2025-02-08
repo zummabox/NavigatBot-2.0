@@ -1,10 +1,8 @@
-from idlelib.pyparse import ParseMap
-
 from aiogram import F, Router, types
-from aiogram.filters import Command, StateFilter, or_f
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import datetime
+
 import asyncio
 
 from sqlalchemy import select, delete
@@ -25,7 +23,6 @@ from handlers.fsm_utils import go_to_next_state
 from handlers.user_private import GROUP_CHAT_ID
 from kbds.callback_list import report_buttons, add_buttons
 from kbds.inline_kbds import get_callback_btns
-from kbds.reply_kbds import get_keyboard
 
 
 admin_router = Router()
@@ -116,8 +113,6 @@ async def get_detail_report(callback: types.CallbackQuery, state: FSMContext, se
 
     await state.clear()
     await callback.answer()
-
-
 
 ########################## Полный отчет по изделию ####################################
 @admin_router.callback_query(F.data == "admin:report")
@@ -225,7 +220,6 @@ async def delete_item(callback: types.CallbackQuery, session: AsyncSession):
                 print(f"Ошибка при удалении сообщения в группе: {e}")
 
         await orm_delete_task(session, item_id)  # Удаляем задачу из БД
-        message_text = "Задача успешно удалена! ✅"
 
     # Обработка для детали
     elif item_type == "detail":
@@ -235,7 +229,6 @@ async def delete_item(callback: types.CallbackQuery, session: AsyncSession):
             return
 
         await orm_delete_detail(session, item_id)  # Удаляем деталь из БД
-        message_text = "Деталь успешно удалена! ✅"
 
     else:
         await callback.answer("Ошибка: неизвестный тип данных!")
@@ -248,8 +241,6 @@ async def delete_item(callback: types.CallbackQuery, session: AsyncSession):
         await callback.message.delete()
     except Exception as e:
         print(f"Ошибка при удалении сообщения: {e}")
-
-    await callback.answer(message_text, show_alert=False)
 
 
 ########################## Изменение данных ####################################
