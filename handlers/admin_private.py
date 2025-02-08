@@ -1,3 +1,5 @@
+from idlelib.pyparse import ParseMap
+
 from aiogram import F, Router, types
 from aiogram.filters import Command, StateFilter, or_f
 from aiogram.fsm.context import FSMContext
@@ -12,8 +14,11 @@ from database.models import MsgId
 from database.orm_query import (orm_add_detail, orm_get_details,
                                 orm_delete_detail, orm_get_detail,
                                 orm_update_detail, orm_get_categories,
-                                orm_get_detail_report, orm_get_tasks, orm_delete_task, orm_get_task_by_id,
-                                update_summary_msg_id, update_all_report_msg_id, update_detail_report_msg_id)
+                                orm_get_detail_report, orm_get_tasks,
+                                orm_delete_task, orm_get_task_by_id,
+                                update_summary_msg_id, update_all_report_msg_id,
+                                update_detail_report_msg_id,
+                                update_last_action_msg_id, delete_last_action_msg_id)
 
 from filters.chat_types import ChatTypeFilter, IsAdmin
 from handlers.fsm_utils import go_to_next_state
@@ -39,7 +44,7 @@ def get_admin_menu():
 
 @admin_router.message(Command("admin"))
 async def show_admin_menu(message: types.Message):
-    await message.answer("Что хотите сделать?", reply_markup=get_admin_menu())
+    await message.answer("📝Главное меню админ панели, можете начать работу с ботом", reply_markup=get_admin_menu())
 
 
 ########################## Отчет по деталям ####################################
@@ -52,7 +57,7 @@ class Report(StatesGroup):
 async def detail_report(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     categories = await orm_get_categories(session)
     btns = {category.name: str(category.id) for category in categories}
-    await callback.message.edit_text("Выберите изделие", reply_markup=get_callback_btns(btns=btns))
+    await callback.message.edit_text("Выберите изделие ⚙️", reply_markup=get_callback_btns(btns=btns))
     await state.set_state(Report.category_report)
     await callback.answer()
 
@@ -83,8 +88,7 @@ async def get_detail_report(callback: types.CallbackQuery, state: FSMContext, se
     detail_data = await orm_get_detail_report(session, detail_name)
 
     if detail_data:
-        for idx, detail in enumerate(detail_data):
-            # Преобразуем дату в нужный формат
+        for detail in detail_data:
             formatted_date = detail.updated.strftime("%d.%m.%y %H:%M:%S")
 
             btns = {
@@ -92,31 +96,27 @@ async def get_detail_report(callback: types.CallbackQuery, state: FSMContext, se
                 "📝 Изменить": f"change_detail_{detail.id}",
             }
 
-            # Отправляем каждую деталь
             msg = await callback.message.answer(
                 f"<b>⚙️Деталь:</b> {detail.name}\n<b>#️⃣Номер:</b> {detail.number}\n<b>♻️Статус:</b> {detail.status}\n<b>📝Изменения статуса:</b> {formatted_date}",
                 reply_markup=get_callback_btns(btns=btns, sizes=(2,)),
                 parse_mode="HTML",
             )
-
-            # Сохраняем ID этого сообщения в БД (создаем новую запись для каждого сообщения)
             await update_detail_report_msg_id(session, callback.message.chat.id, msg.message_id)
 
-        # Если это последняя деталь, добавляем кнопку "Скрыть отправленные данные"
         hide_btn = {"👀 Скрыть отправленные данные": "hide_details_report"}
         hide_msg = await callback.message.answer(
-            "Это последние данные. Если хотите скрыть их, нажмите ниже.",
-            reply_markup=get_callback_btns(btns=hide_btn, sizes=(1,)),
+            "Это последние данные. Если хотите скрыть их, нажмите ниже ⬇️",
+            reply_markup=get_callback_btns(btns=hide_btn, sizes=(1,))
         )
-
-        # Сохраняем ID сообщения с кнопкой "Скрыть отправленные данные"
         await update_detail_report_msg_id(session, callback.message.chat.id, hide_msg.message_id)
 
-        await callback.message.answer("Хотите сделать что-то еще?", reply_markup=get_admin_menu())
+    # Сохраняем последнее сообщение
+    summary_msg = await callback.message.answer("Хотите сделать что-то еще?", reply_markup=get_admin_menu())
+    await update_last_action_msg_id(session, callback.message.chat.id, summary_msg.message_id)
 
     await state.clear()
-
     await callback.answer()
+
 
 
 ########################## Полный отчет по изделию ####################################
@@ -124,7 +124,7 @@ async def get_detail_report(callback: types.CallbackQuery, state: FSMContext, se
 async def all_report(callback: types.CallbackQuery, session: AsyncSession):
     categories = await orm_get_categories(session)
     btns = {category.name: f'category_{category.id}' for category in categories}
-    await callback.message.edit_text("Выберите изделие", reply_markup=get_callback_btns(btns=btns))
+    await callback.message.edit_text("Выберите изделие ⚙️", reply_markup=get_callback_btns(btns=btns))
     await callback.answer()
 
 
@@ -134,14 +134,15 @@ async def all_report(callback: types.CallbackQuery, session: AsyncSession):
         await callback.message.delete()
     except Exception as e:
         print(f"Ошибка при удалении сообщения: {e}")
+
     category_id = callback.data.split('_')[-1]
-    report_msg_ids = []  # Список для хранения ID сообщений с деталями
+    report_msg_ids = []
 
     for detail in await orm_get_details(session, int(category_id)):
         msg = await callback.message.answer(
             f"<b>⚙️Деталь:</b> {detail.name}\n<b>#️⃣Номер:</b> {detail.number}\n<b>♻️Статус:</b> {detail.status}",
             reply_markup=get_callback_btns(
-                btns={  # Кнопки для управления деталями
+                btns={
                     "❌Удалить": f"delete_detail_{detail.id}",
                     "📝Изменить": f"change_detail_{detail.id}",
                 },
@@ -151,7 +152,6 @@ async def all_report(callback: types.CallbackQuery, session: AsyncSession):
         )
         report_msg_ids.append(msg.message_id)
 
-    # Отправляем сообщение с кнопкой "Скрыть отчет"
     hide_report_msg = await callback.message.answer(
         "Это последние данные. Если хотите скрыть их, нажмите ниже.",
         reply_markup=get_callback_btns(
@@ -161,13 +161,15 @@ async def all_report(callback: types.CallbackQuery, session: AsyncSession):
     )
     report_msg_ids.append(hide_report_msg.message_id)
 
-    # Сохраняем все ID в БД как строку (разделённую запятыми)
     for msg_id in report_msg_ids:
         await update_all_report_msg_id(session, chat_id=callback.message.chat.id, new_msg_id=msg_id)
 
-    # Отправляем меню администратора
-    await callback.message.answer("Хотите сделать что-то еще?", reply_markup=get_admin_menu())
+    # Сохраняем последнее сообщение
+    summary_msg = await callback.message.answer("Хотите сделать что-то еще?", reply_markup=get_admin_menu())
+    await update_last_action_msg_id(session, callback.message.chat.id, summary_msg.message_id)
+
     await callback.answer()
+
 
 #################################### Отчет по задачам ###################################
 @admin_router.callback_query(F.data == "admin:tasks")
@@ -175,7 +177,7 @@ async def all_tasks(callback: types.CallbackQuery, session: AsyncSession):
     tasks = await orm_get_tasks(session)
 
     if not tasks:
-        await callback.message.edit_text("Задачи не найдены.")
+        await callback.message.edit_text("🙅‍♂️Нет активных задач.", reply_markup=get_admin_menu())
         await callback.answer()
         return
 
@@ -259,30 +261,52 @@ class AddDetails(StatesGroup):
     detail_for_change = None
 
     texts = {
-        'AddDetails:category': 'Выберите категорию заново:',
-        'AddDetails:name': 'Введите название заново:',
-        'AddDetails:process_details': 'Введите заводской номер и статус в формате: Номер, Статус',
+        'AddDetails:category': 'Выберите изделие заново ⚙️:',
+        'AddDetails:name': 'Выберите деталь заново 🔩:',
+        'AddDetails:process_details': 'Введите заводской номер и статус в формате: <b>Номер</b>, <b>Статус</b>',
     }
 
 
 @admin_router.callback_query(StateFilter(None), F.data.startswith("change_"))
 async def change_detail_callback(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    #Получаем последнее сообщение
+    result = await session.execute(select(MsgId).filter_by(chat_id=callback.message.chat.id))
+    msg_record = result.scalars().first()
+
+    if msg_record and msg_record.last_action_msg_id:
+        try:
+            #Удаляем последнее сообщение
+            await callback.bot.delete_message(chat_id=callback.message.chat.id,
+                                              message_id=msg_record.last_action_msg_id)
+
+            #Очищаем ID последнего сообщения в БД
+            await delete_last_action_msg_id(session, chat_id=callback.message.chat.id)
+        except Exception as e:
+            print(f"Ошибка при удалении последнего сообщения: {e}")
+
+    # Логика для изменения детали
     categories = await orm_get_categories(session)
     btns = {category.name: str(category.id) for category in categories}
+
+    btns["⏭️ Пропустить"] = "add:пропустить"
 
     detail_id = callback.data.split("_")[-1]
     AddDetails.detail_for_change = await orm_get_detail(session, int(detail_id))
 
     await callback.answer()
-    await callback.message.answer("Выберите изделие", reply_markup=get_callback_btns(btns=btns))
+    await callback.message.answer("Выберите изделие ⚙️", reply_markup=get_callback_btns(btns=btns))
     await state.set_state(AddDetails.category)
+
 
 ############################# Код ниже для FSM ##########################################
 @admin_router.callback_query(StateFilter(None), F.data == "admin:add_data")
 async def add_category(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     categories = await orm_get_categories(session)
     btns = {category.name: str(category.id) for category in categories}
-    await callback.message.edit_text("Выберите изделие", reply_markup=get_callback_btns(btns=btns))
+
+    btns["❌Отмена"] = "cancel:отмена"
+
+    await callback.message.edit_text("Выберите изделие ⚙️", reply_markup=get_callback_btns(btns=btns, sizes=(2,)))
     await state.set_state(AddDetails.category)
     await callback.answer()
 
@@ -291,7 +315,7 @@ async def add_category(callback: types.CallbackQuery, state: FSMContext, session
 @admin_router.callback_query(StateFilter('*'), F.data == "cancel:отмена")
 async def cancel_callback(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.answer("Действие отменено", reply_markup=get_admin_menu())
+    await callback.message.edit_text("❌Действие отменено. Можете продолжить работу", reply_markup=get_admin_menu())
     await callback.answer()
 
 
@@ -331,26 +355,34 @@ async def process_back_button(callback_query: types.CallbackQuery, state: FSMCon
 
 ################################################################################################
 
-
 @admin_router.callback_query(AddDetails.category)
 async def fsm_category_choice(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    category_id = int(callback.data)
-    categories = await orm_get_categories(session)
+    category_data = callback.data
 
-    if category_id in [category.id for category in categories]:
-        btns = add_buttons.get(category_id, {})
-
-        # Сохраняем кнопки и предыдущий статус в state
-        await state.update_data(category=category_id, prev_buttons=get_callback_btns(btns=btns))
-
-        # Переход с сохранением истории состояний
-        await go_to_next_state(state, AddDetails.name)
-
-        await callback.message.edit_text('Выберите деталь.', reply_markup=get_callback_btns(btns=btns))
+    # Проверяем, нажата ли кнопка "Пропустить"
+    if category_data == "add:пропустить":
+        # Используем предыдущую категорию
+        category_id = AddDetails.detail_for_change.category_id
+        await state.update_data(category=category_id)
     else:
-        await callback.answer("Выберите изделие из кнопок.")
+        category_id = int(category_data)
+        categories = await orm_get_categories(session)
 
+        if category_id in [category.id for category in categories]:
+            await state.update_data(category=category_id)
+        else:
+            return await callback.answer("Выберите изделие из кнопок.")
 
+    # Кнопки для выбора детали
+    btns = add_buttons.get(category_id, {})
+
+    # Сохраняем предыдущие кнопки в state
+    await state.update_data(prev_buttons=get_callback_btns(btns=btns))
+
+    # Переход с сохранением истории состояний
+    await go_to_next_state(state, AddDetails.name)
+
+    await callback.message.edit_text('Выберите деталь 🔩', reply_markup=get_callback_btns(btns=btns))
 
 ######## Ловим любые некорректные действия, кроме нажатия на кнопку выбора категории #########
 @admin_router.message(AddDetails.category)
@@ -376,8 +408,8 @@ async def add_name(callback: types.CallbackQuery, state: FSMContext):
     await go_to_next_state(state, AddDetails.process_details)
 
     # Редактируем сообщение с добавлением клавиатуры
-    msg = await callback.message.edit_text("Введите заводской номер и статус в формате 'Номер, Статус'",
-                                           reply_markup=keyboard)
+    msg = await callback.message.edit_text("Введите заводской номер и статус в формате: <b>Номер</b>, <b>Статус</b>",
+                                           reply_markup=keyboard, parse_mode="HTML")
     await state.update_data(instruction_msg_id=msg.message_id)
 
 
@@ -421,13 +453,13 @@ async def add_process_details(message: types.Message, state: FSMContext, session
             # Добавляем данные в список итогового сообщения
             added_details.append(f"<b>#️⃣Номер:</b> {number}\n<b>♻️Статус:</b> {status}")
         else:
-            await message.answer("Пожалуйста, введите данные в правильном формате: Номер, Статус")
+            await message.answer("Пожалуйста, введите данные в правильном формате: <b>Номер</b>, <b>Статус</b>")
             return
 
     # Отправляем одно сообщение, если добавлены детали
     if added_details:
-        success_msg = await message.answer("Детали успешно добавлены")
-        await asyncio.sleep(2)  # Ждём 2 секунды
+        success_msg = await message.answer("Вписываем данные... 📝")
+        await asyncio.sleep(1)  # Ждём 1 секунды
         try:
             await success_msg.delete()
         except Exception:

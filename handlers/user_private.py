@@ -20,7 +20,7 @@ user_private_router.message.filter(ChatTypeFilter(['private']))
 @user_private_router.message(CommandStart())
 async def start_cmd(message: types.Message):
     await message.answer(
-        "Привет, я виртуальный помощник",
+        "Привет, я виртуальный помощник. Если хочешь добавить задачу, нажми на клавишу ниже ⬇️",
         reply_markup=get_keyboard(
             "Добавить задачу",
             placeholder="Что вас интересует?",

@@ -1,8 +1,8 @@
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Detail, Category, Task, MsgId
 
+from database.models import Detail, Category, Task, MsgId
 
 ############################ Детали ######################################
 async def orm_add_detail(session: AsyncSession, data: dict):
@@ -108,7 +108,6 @@ async def update_summary_msg_id(session: AsyncSession, chat_id: int, summary_msg
         await session.commit()
 
 
-
 async def update_detail_report_msg_id(session: AsyncSession, chat_id: int, msg_id: int):
     # Создаем новую запись для каждого сообщения
     msg = MsgId(chat_id=chat_id, detail_report_msg_id=msg_id)
@@ -132,4 +131,30 @@ async def update_all_report_msg_id(session: AsyncSession, chat_id: int, new_msg_
         session.add(msg_record)
 
     await session.commit()
+
+async def update_last_action_msg_id(session: AsyncSession, chat_id: int, msg_id: int):
+    try:
+        result = await session.execute(select(MsgId).filter_by(chat_id=chat_id))
+        msg = result.scalars().first()
+
+        if msg:
+            msg.last_action_msg_id = msg_id
+        else:
+            msg = MsgId(chat_id=chat_id, last_action_msg_id=msg_id)
+            session.add(msg)
+
+        await session.commit()
+    except Exception as e:
+        print(f"Ошибка транзакции: {e}")
+        await session.rollback()
+
+async def delete_last_action_msg_id(session: AsyncSession, chat_id: int):
+    async with session.begin():
+        result = await session.execute(select(MsgId).filter_by(chat_id=chat_id))
+        msg = result.scalars().first()
+
+        if msg and msg.last_action_msg_id:
+            msg.last_action_msg_id = None
+            await session.commit()
+
 

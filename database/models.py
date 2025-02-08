@@ -49,3 +49,4 @@ class MsgId(Base):
     summary_msg_id: Mapped[int] = mapped_column(nullable=True)  # Для итогового сообщения
     detail_report_msg_id: Mapped[int] = mapped_column(nullable=True)  # Для отчета по деталям
     all_report_msg_id = Column(String, nullable=True)  # Для общего отчета
+    last_action_msg_id: Mapped[int] = mapped_column(nullable=True)  # Для последнего сообщения
